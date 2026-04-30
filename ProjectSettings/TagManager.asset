@@ -11,10 +11,10 @@ TagManager:
   - Ground
   - Water
   - UI
-  - 
-  - 
-  - 
-  - 
+  - SlowGround
+  - FastGround
+  - ImpulseGround
+  - Fly
   - 
   - 
   - 

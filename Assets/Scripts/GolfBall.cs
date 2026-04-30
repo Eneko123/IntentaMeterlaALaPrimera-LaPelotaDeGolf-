@@ -61,7 +61,7 @@ public class GolfBall : MonoBehaviour
 
     private void OnCollisionStay(Collision collision)
     {
-        if (LayerMask.LayerToName(collision.gameObject.layer) == "Ground")
+        if (LayerMask.LayerToName(collision.gameObject.layer) == "Ground" || LayerMask.LayerToName(collision.gameObject.layer) == "SlowGround")
         {
             onCol = true;
         }
