@@ -13,6 +13,7 @@ public class GameUI : MonoBehaviour
     [SerializeField] private Slider angle;
 
     [SerializeField] private Button start;
+    [SerializeField] private Button restart;
     
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
