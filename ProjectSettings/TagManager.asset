@@ -15,8 +15,8 @@ TagManager:
   - FastGround
   - ImpulseGroundX
   - ImpulseGroundY
-  - Fly
-  - 
+  - Wind
+  - InvertedGravity
   - 
   - 
   - 
