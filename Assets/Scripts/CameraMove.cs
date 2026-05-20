@@ -13,9 +13,6 @@ public class CameraMove : MonoBehaviour
         Vector3 up = transform.up;
         Vector3 right = transform.right;
 
-        // Aplanamos los vectores al plano XZ para evitar movimiento vertical no deseado
-        up.y = 0f;
-        right.y = 0f;
         up.Normalize();
         right.Normalize();
 

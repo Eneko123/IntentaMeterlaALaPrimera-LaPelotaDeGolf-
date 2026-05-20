@@ -1,93 +1,50 @@
-﻿using Unity.VisualScripting;
-using UnityEditor.UIElements;
-using UnityEngine;
+﻿using UnityEngine;
 
-/// <summary>
-/// Componente principal de la pelota de golf que maneja física, colisiones y efectos del entorno.
-/// Cumple con los requisitos del proyecto:
-/// - Aplicación de fuerzas e impulsos
-/// - Comprobación de velocidad (límite máximo, desaceleración basada en velocidad)
-/// - Objetos físicos interactivos (diferentes tipos de suelo y áreas de efecto)
-/// </summary>
+// - Gestionar componentes propios (Rigidbody, LineRenderer)
+// - Dibujar trayectoria predicha
+// - Limitar velocidad maxima
+// - Detectar contacto con superficies y delegar efectos
+// - Aplicar efectos ambientales (viento, gravedad)
+// - Detectar victoria (Hoyo) y caida (Vacio)
 public class GolfBall : MonoBehaviour
 {
-    #region Componentes y Referencias
+    #region Referencias
     internal Rigidbody rb;
     internal LineRenderer _line;
 
     [Header("Referencias")]
     [SerializeField] private GolfStick _golfStick;
-
+    [SerializeField] private Transform launchPoint;
     #endregion
 
-    #region Parámetros de Física del Suelo
-    [Header("Física del Suelo")]
-    [SerializeField] private float _NormalGroundDeceleration = 0.02f;
-    [SerializeField] private float _SlowGroundDeceleration = 0.04f;
-    [SerializeField] private float _FastGroundAcceleration = 0.01f;
-    [SerializeField] private float _impulse = 5f;
-
-    #endregion
-
-    #region Parámetros de Áreas de Efecto
-    [Header("Áreas de Efecto")]
-    [SerializeField] private float _windForce = 2f;
-
-    [Header("Límites de Velocidad")]
-    [SerializeField] private float _maxVelocity = 30f;
+    #region Parametros Globales
+    [Header("Limites de Velocidad")]
+    [SerializeField] private float _maxVelocity = 100f;
     [SerializeField] private float _minVelocityThreshold = 0.005f;
 
+    [Header("Areas de Efecto - Fuerza de Viento")]
+    // Multiplicador de fuerza para areas de viento
+    [SerializeField] private float _windForceMultiplier = 2f;
+
+    [Header("Deteccion de Victoria y Caída")]
+    // Tiempo de gracia antes de auto-reiniciar por baja velocidad (segundos)
+    [SerializeField] private float _autoRestartDelay = 2f;
+    private float _stoppedTimer = 0f;
+    private bool _hasNotifiedStop = false;
     #endregion
 
-    #region Parámetros de Trayectoria
-    [Header("Visualización de Trayectoria")]
+    #region Parametros de Trayectoria
+    [Header("Visualizaci0n de Trayectoria")]
     [SerializeField] private int resolution = 30;
     [SerializeField] private float timeStep = 0.1f;
-    [SerializeField] private Transform launchPoint;
-
     #endregion
 
-    #region Estados de Colisión
-    // Estados de contacto con diferentes superficies
-    private GroundContactState groundState;
+    #region Estados
+    // Superficie actual en contacto
+    private GroundSurface currentGroundSurface;
 
-    // Estados de áreas de efecto
-    private EnvironmentEffectState environmentState;
-
-    #endregion
-
-    #region Estructuras de Estado
-    /// <summary>
-    /// Estructura que agrupa todos los estados de contacto con el suelo
-    /// </summary>
-    private struct GroundContactState
-    {
-        public bool onNormalGround;
-        public bool onSlowGround;
-        public bool onFastGround;
-        public bool onImpulseGroundX;
-        public bool onImpulseGroundY;
-
-        public void Reset()
-        {
-            onNormalGround = false;
-            onSlowGround = false;
-            onFastGround = false;
-            onImpulseGroundX = false;
-            onImpulseGroundY = false;
-        }
-
-        public bool IsGrounded()
-        {
-            return onNormalGround || onSlowGround || onFastGround ||
-                   onImpulseGroundX || onImpulseGroundY;
-        }
-    }
-
-    /// <summary>
-    /// Estructura que agrupa todos los estados de efectos ambientales
-    /// </summary>
-    private struct EnvironmentEffectState
+    // Estados de areas de efecto
+    private struct EnvironmentState
     {
         public bool inWindArea;
         public Vector3 windDirection;
@@ -103,26 +60,26 @@ public class GolfBall : MonoBehaviour
         }
     }
 
+    private EnvironmentState environmentState;
     #endregion
 
-    #region Inicialización
+    #region Inicializacion
     void Start()
     {
         rb = GetComponent<Rigidbody>();
         _line = GetComponent<LineRenderer>();
 
-        groundState = new GroundContactState();
-        groundState.Reset();
-
-        environmentState = new EnvironmentEffectState();
+        environmentState = new EnvironmentState();
         environmentState.Reset();
+
+        if (launchPoint == null)
+        {
+            launchPoint = transform;
+        }
 
         ValidateComponents();
     }
 
-    /// <summary>
-    /// Valida que todos los componentes necesarios estén presentes
-    /// </summary>
     private void ValidateComponents()
     {
         if (rb == null)
@@ -132,39 +89,29 @@ public class GolfBall : MonoBehaviour
 
         if (_line == null)
         {
-            Debug.LogWarning($"GolfBall en {gameObject.name} no tiene LineRenderer - la trayectoria no se mostrará");
+            Debug.LogWarning($"GolfBall en {gameObject.name} no tiene LineRenderer");
         }
 
         if (_golfStick == null)
         {
             Debug.LogWarning($"GolfBall en {gameObject.name} no tiene referencia a GolfStick");
         }
-
-        if (launchPoint == null)
-        {
-            launchPoint = transform;
-            Debug.LogWarning($"GolfBall en {gameObject.name}: usando transform de la pelota como punto de lanzamiento");
-        }
     }
-
     #endregion
 
-    #region Update Loop
+    #region Update - Trayectoria
     void Update()
     {
-        // Solo dibujamos la trayectoria cuando NO se está presionando espacio
+        // Dibujar trayectoria solo cuando NO se esta cargando el golpe
         if (!Input.GetKey(KeyCode.Space) && _line != null)
         {
             DrawTrajectory();
         }
+
+        // Comprobar si la pelota esta detenida por mucho tiempo
+        CheckIfStopped();
     }
 
-    #endregion
-
-    #region Visualización de Trayectoria
-    /// <summary>
-    /// Dibuja la trayectoria predicha de la pelota usando física parabólica
-    /// </summary>
     void DrawTrajectory()
     {
         if (_golfStick == null || _line == null) return;
@@ -176,7 +123,6 @@ public class GolfBall : MonoBehaviour
         for (int i = 0; i < resolution; i++)
         {
             float t = i * timeStep;
-            // Ecuación de movimiento parabólico: s = s₀ + v₀t + ½at²
             points[i] = startPos + startVel * t + 0.5f * Physics.gravity * t * t;
         }
 
@@ -184,9 +130,6 @@ public class GolfBall : MonoBehaviour
         _line.SetPositions(points);
     }
 
-    /// <summary>
-    /// Elimina la visualización de la trayectoria
-    /// </summary>
     public void DeleteTrajectory()
     {
         if (_line != null)
@@ -195,9 +138,48 @@ public class GolfBall : MonoBehaviour
         }
     }
 
+    // Mostrar la trayectoria 
+    public void ShowTrajectory()
+    {
+        if (_line != null)
+        {
+            _line.enabled = true;
+        }
+        _stoppedTimer = 0f;
+        _hasNotifiedStop = false;
+    }
+
+    // Comprobar si la pelota lleva mucho tiempo parada
+    private void CheckIfStopped()
+    {
+        // Solo verificar si el juego esta en estado Playing
+        if (GameManager.Instance == null) return;
+        if (GameManager.Instance.GetCurrentState() != GameManager.GameState.Playing) return;
+
+        if (rb.linearVelocity.magnitude < _minVelocityThreshold * 20f) // Umbral mas alto para auto-restart
+        {
+            _stoppedTimer += Time.deltaTime;
+
+            if (_stoppedTimer >= _autoRestartDelay && !_hasNotifiedStop)
+            {
+                _hasNotifiedStop = true;
+                Debug.Log("Pelota detenida - Activando reinicio automatico");
+
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.RetryLevel();
+                }
+            }
+        }
+        else
+        {
+            _stoppedTimer = 0f;
+            _hasNotifiedStop = false;
+        }
+    }
     #endregion
 
-    #region Física - FixedUpdate
+    #region FixedUpdate - Fisica
     private void FixedUpdate()
     {
         ApplyGroundPhysics();
@@ -205,86 +187,18 @@ public class GolfBall : MonoBehaviour
         LimitVelocity();
     }
 
-    /// <summary>
-    /// Aplica todas las físicas relacionadas con el contacto con el suelo
-    /// </summary>
+    // Delega la fisica de suelo al componente GroundSurface actual
     private void ApplyGroundPhysics()
     {
         if (!IsMoving()) return;
 
-        // Aplicar efectos de suelo en orden de prioridad
-        if (groundState.onSlowGround)
+        if (currentGroundSurface != null)
         {
-            ApplySlowGroundDeceleration();
-        }
-        else if (groundState.onFastGround)
-        {
-            ApplyFastGroundAcceleration();
-        }
-        else if (groundState.onNormalGround)
-        {
-            ApplyNormalDeceleration();
-        }
-
-        // Impulsos son independientes del tipo de suelo
-        if (groundState.onImpulseGroundX)
-        {
-            ApplyImpulseX();
-        }
-
-        if (groundState.onImpulseGroundY)
-        {
-            ApplyImpulseY();
+            currentGroundSurface.ApplyEffect(rb);
         }
     }
 
-    /// <summary>
-    /// Aplica desaceleración en suelo normal
-    /// </summary>
-    private void ApplyNormalDeceleration()
-    {
-        rb.linearVelocity -= rb.linearVelocity * _NormalGroundDeceleration;
-    }
-
-    /// <summary>
-    /// Aplica desaceleración aumentada en suelo lento (fricción alta)
-    /// </summary>
-    private void ApplySlowGroundDeceleration()
-    {
-        rb.linearVelocity -= rb.linearVelocity * _SlowGroundDeceleration;
-    }
-
-    /// <summary>
-    /// Aplica aceleración en suelo rápido (baja fricción o impulso)
-    /// </summary>
-    private void ApplyFastGroundAcceleration()
-    {
-        rb.linearVelocity += rb.linearVelocity * _FastGroundAcceleration;
-    }
-
-    /// <summary>
-    /// Aplica impulso horizontal (AddForce con ForceMode.Impulse)
-    /// </summary>
-    private void ApplyImpulseX()
-    {
-        rb.AddForce(Vector2.right * _impulse, ForceMode.Impulse);
-        // Reset del estado para evitar múltiples impulsos
-        groundState.onImpulseGroundX = false;
-    }
-
-    /// <summary>
-    /// Aplica impulso vertical (AddForce con ForceMode.Impulse)
-    /// </summary>
-    private void ApplyImpulseY()
-    {
-        rb.AddForce(Vector2.up * _impulse, ForceMode.Impulse);
-        // Reset del estado para evitar múltiples impulsos
-        groundState.onImpulseGroundY = false;
-    }
-
-    /// <summary>
-    /// Aplica todos los efectos ambientales (viento, gravedad invertida)
-    /// </summary>
+    // Aplica efectos ambientales (viento, gravedad invertida)
     private void ApplyEnvironmentEffects()
     {
         if (environmentState.inWindArea)
@@ -298,28 +212,17 @@ public class GolfBall : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Aplica fuerza de viento constante (AddForce con ForceMode.Force)
-    /// </summary>
     private void ApplyWindForce()
     {
-        if (!IsMoving()) return;
-        rb.AddForce(environmentState.windDirection * _windForce, ForceMode.Force);
+        rb.AddForce(environmentState.windDirection * _windForceMultiplier, ForceMode.Force);
     }
 
-    /// <summary>
-    /// Aplica gravedad invertida cancelando la gravedad normal
-    /// </summary>
     private void ApplyInvertedGravity()
     {
-        // Cancelar la gravedad normal y aplicar gravedad invertida
-        // Gravedad de Unity es aproximadamente -9.81 en Y
-        rb.AddForce(Vector3.up * Mathf.Abs(Physics.gravity.y) * environmentState.gravityMultiplier, ForceMode.Acceleration);
+        rb.AddForce(Vector3.up * Mathf.Abs(Physics.gravity.y) * environmentState.gravityMultiplier,
+                    ForceMode.Acceleration);
     }
 
-    /// <summary>
-    /// Limita la velocidad máxima de la pelota (requisito del proyecto)
-    /// </summary>
     private void LimitVelocity()
     {
         if (rb.linearVelocity.magnitude > _maxVelocity)
@@ -328,190 +231,104 @@ public class GolfBall : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Comprueba si la pelota se está moviendo significativamente
-    /// </summary>
     private bool IsMoving()
     {
         return rb.linearVelocity.magnitude > _minVelocityThreshold;
     }
-
     #endregion
 
-    #region Gestión de Colisiones - Suelo
-    /// <summary>
-    /// Detecta contacto continuo con diferentes tipos de suelo
-    /// </summary>
+    #region Colisiones - Delegacion a Componentes
+    private void OnCollisionEnter(Collision collision)
+    {
+        // Buscar componente GroundSurface
+        GroundSurface surface = collision.gameObject.GetComponent<GroundSurface>();
+        if (surface != null)
+        {
+            currentGroundSurface = surface;
+        }
+
+        // Detectar si toco el Hoyo (Victoria)
+        if (collision.gameObject.layer == LayerMask.NameToLayer("Hoyo"))
+        {
+            Debug.Log("Pelota en el hoyo!");
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.OnBallInHole();
+            }
+        }
+    }
+
     private void OnCollisionStay(Collision collision)
     {
-        string layerName = LayerMask.LayerToName(collision.gameObject.layer);
-
-        switch (layerName)
+        // Mantener referencia a la superficie mientras estamos en contacto
+        if (currentGroundSurface == null)
         {
-            case "Ground":
-                groundState.onNormalGround = true;
-                break;
-            case "SlowGround":
-                groundState.onSlowGround = true;
-                break;
-            case "FastGround":
-                groundState.onFastGround = true;
-                break;
-            case "ImpulseGroundX":
-                groundState.onImpulseGroundX = true;
-                break;
-            case "ImpulseGroundY":
-                groundState.onImpulseGroundY = true;
-                break;
+            GroundSurface surface = collision.gameObject.GetComponent<GroundSurface>();
+            if (surface != null)
+            {
+                currentGroundSurface = surface;
+            }
         }
     }
 
-    /// <summary>
-    /// Detecta cuando la pelota deja de tocar un tipo de suelo
-    /// </summary>
     private void OnCollisionExit(Collision collision)
     {
-        string layerName = LayerMask.LayerToName(collision.gameObject.layer);
-
-        switch (layerName)
+        // Limpiar referencia cuando dejamos la superficie
+        GroundSurface surface = collision.gameObject.GetComponent<GroundSurface>();
+        if (surface != null && currentGroundSurface == surface)
         {
-            case "Ground":
-                groundState.onNormalGround = false;
-                break;
-            case "SlowGround":
-                groundState.onSlowGround = false;
-                break;
-            case "FastGround":
-                groundState.onFastGround = false;
-                break;
-            case "ImpulseGroundX":
-                groundState.onImpulseGroundX = false;
-                break;
-            case "ImpulseGroundY":
-                groundState.onImpulseGroundY = false;
-                break;
+            currentGroundSurface = null;
+        }
+    }
+    #endregion
+
+    #region Triggers - Areas de Efecto
+    private void OnTriggerEnter(Collider other)
+    {
+        // Detectar caida al Vacio
+        if (other.gameObject.layer == LayerMask.NameToLayer("Vacio"))
+        {
+            Debug.Log("Pelota cayo al vacio!");
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.OnBallFellOff();
+            }
         }
     }
 
-    #endregion
-
-    #region Gestión de Triggers - Áreas de Efecto
-    /// <summary>
-    /// Detecta entrada continua en áreas de efecto especiales
-    /// </summary>
     private void OnTriggerStay(Collider other)
     {
-        string layerName = LayerMask.LayerToName(other.gameObject.layer);
-
-        switch (layerName)
-        {
-            case "Wind":
-                HandleWindArea(other);
-                break;
-            case "InvertedGravity":
-                HandleInvertedGravityArea(other);
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Maneja la entrada en un área de viento
-    /// </summary>
-    private void HandleWindArea(Collider windCollider)
-    {
-        environmentState.inWindArea = true;
-
-        // Obtener la dirección del viento desde el componente WindArea
-        WindArea windArea = windCollider.GetComponent<WindArea>();
+        // Detectar WindArea
+        WindArea windArea = other.GetComponent<WindArea>();
         if (windArea != null)
         {
+            environmentState.inWindArea = true;
             environmentState.windDirection = windArea.GetWindDirection();
         }
-        else
-        {
-            // Dirección por defecto si no hay componente WindArea
-            environmentState.windDirection = Vector3.up;
-            Debug.LogWarning($"WindArea en {windCollider.gameObject.name} no tiene componente WindArea");
-        }
-    }
 
-    /// <summary>
-    /// Maneja la entrada en un área de gravedad invertida
-    /// </summary>
-    private void HandleInvertedGravityArea(Collider gravityCollider)
-    {
-        environmentState.inInvertedGravityArea = true;
-
-        // Obtener el multiplicador de gravedad si existe
-        InvertedGravityArea gravityArea = gravityCollider.GetComponent<InvertedGravityArea>();
+        // Detectar InvertedGravityArea
+        InvertedGravityArea gravityArea = other.GetComponent<InvertedGravityArea>();
         if (gravityArea != null)
         {
+            environmentState.inInvertedGravityArea = true;
             environmentState.gravityMultiplier = gravityArea.GetGravityMultiplier();
         }
-        else
-        {
-            environmentState.gravityMultiplier = 2f; // Valor por defecto
-        }
     }
 
-    /// <summary>
-    /// Detecta cuando la pelota sale de áreas de efecto
-    /// </summary>
     private void OnTriggerExit(Collider other)
     {
-        string layerName = LayerMask.LayerToName(other.gameObject.layer);
-
-        switch (layerName)
+        // Salir de WindArea
+        if (other.GetComponent<WindArea>() != null)
         {
-            case "Wind":
-                environmentState.inWindArea = false;
-                environmentState.windDirection = Vector3.zero;
-                break;
-            case "InvertedGravity":
-                environmentState.inInvertedGravityArea = false;
-                break;
-        }
-    }
-
-    #endregion
-
-    #region Utilidades y Debug
-    /// <summary>
-    /// Obtiene información del estado actual de la pelota para debugging
-    /// </summary>
-    public string GetDebugInfo()
-    {
-        return $"Velocidad: {rb.linearVelocity.magnitude:F2} m/s\n" +
-               $"En suelo: {groundState.IsGrounded()}\n" +
-               $"En viento: {environmentState.inWindArea}\n" +
-               $"Gravedad invertida: {environmentState.inInvertedGravityArea}";
-    }
-
-    #endregion
-
-    #region Gizmos (Editor)
-#if UNITY_EDITOR
-    private void OnDrawGizmos()
-    {
-        if (!Application.isPlaying || rb == null) return;
-
-        // Dibujar vector de velocidad
-        Gizmos.color = Color.green;
-        Gizmos.DrawLine(transform.position, transform.position + rb.linearVelocity * 0.5f);
-
-        // Dibujar estados
-        if (groundState.IsGrounded())
-        {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(transform.position, 0.6f);
+            environmentState.inWindArea = false;
+            environmentState.windDirection = Vector3.zero;
         }
 
-        if (environmentState.inWindArea)
+        // Salir de InvertedGravityArea
+        if (other.GetComponent<InvertedGravityArea>() != null)
         {
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawLine(transform.position, transform.position + environmentState.windDirection);
+            environmentState.inInvertedGravityArea = false;
         }
     }
-#endif
     #endregion
 }

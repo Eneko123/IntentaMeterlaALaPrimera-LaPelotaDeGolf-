@@ -13,10 +13,18 @@ public class GolfStick : MonoBehaviour
 
     private void Update()
     {
+        // Solo permitir golpear si estamos en estado PreGame
         if (Input.GetKeyDown(KeyCode.Space))
         {
-            GiveImpulseToBall(_ball);
-            _ball.DeleteTrajectory();
+            if (GameManager.Instance != null &&
+                GameManager.Instance.GetCurrentState() == GameManager.GameState.PreGame)
+            {
+                GiveImpulseToBall(_ball);
+                _ball.DeleteTrajectory();
+
+                // Notificar al GameManager que la pelota fue golpeada
+                GameManager.Instance.OnBallHit();
+            }
         }
     }
 
@@ -29,7 +37,10 @@ public class GolfStick : MonoBehaviour
 
     private void GiveImpulseToBall(GolfBall ball)
     {
-        ball.rb.AddForce(ConvertAngleToVector(_angle, BASE_VECTOR) * _force, ForceMode.Impulse);
+        if (ball != null && ball.rb != null)
+        {
+            ball.rb.AddForce(ConvertAngleToVector(_angle, BASE_VECTOR) * _force, ForceMode.Impulse);
+        }
     }
 
     #region Getters/Setters
